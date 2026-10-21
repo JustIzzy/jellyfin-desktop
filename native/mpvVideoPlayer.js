@@ -141,6 +141,14 @@
                     this._timeUpdated = true;
                 }
 
+                // Safety net: playback time is advancing, so playback has
+                // demonstrably started. If playing() never arrives we would
+                // otherwise leave the loading backdrop and spinner up forever.
+                if (time > 0 && !this._started) {
+                    console.warn('mpvVideoPlayer: time advancing without playing(); starting anyway');
+                    this.onPlaying();
+                }
+
                 this._currentTime = time;
                 this.events.trigger(this, 'timeupdate');
             };

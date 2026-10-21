@@ -44,20 +44,106 @@ Window
     }
   }
 
+  // Borderless-maximised instead of true fullscreen.
+  //
+  // On hybrid-GPU (Optimus) systems, true Window.FullScreen lets Windows hand the
+  // window to a direct-scanout / independent-flip path. Qt's OpenGL FBO layer -
+  // which is where mpv draws via the render API - does not survive that handoff,
+  // so the video node stops being composited while the transparent web UI still
+  // paints. Symptom: audio plays, UI works, video is invisible until the user
+  // leaves fullscreen. Borderless-maximised keeps DWM compositing and renders
+  // correctly, while looking identical to the user.
+  property bool fakeFullScreen: false
+
+  function _enterFakeFullScreen() {
+    if (fakeFullScreen)
+      return
+    fakeFullScreen = true
+    mainWindow.flags |= Qt.FramelessWindowHint
+    visibility = Window.Maximized
+  }
+
+  function _leaveFakeFullScreen() {
+    if (!fakeFullScreen)
+      return
+    fakeFullScreen = false
+    mainWindow.flags &= ~Qt.FramelessWindowHint
+    visibility = Window.Windowed
+  }
+
   function toggleFullscreen() {
-    visibility = (visibility === Window.FullScreen) ? Window.Windowed : Window.FullScreen
+    if (fakeFullScreen)
+      _leaveFakeFullScreen()
+    else
+      _enterFakeFullScreen()
   }
 
   function toggleDebug() {
     showDebugLayer = !showDebugLayer
   }
 
+  // : re-apply the web view's base background
+  // colour after the page has loaded.
+  //
+  // The view is declared with backgroundColor: "transparent", yet the surface
+  // it composites is opaque (alpha=255 everywhere, measured via grabToImage).
+  // Qt only propagates this colour to Chromium's base background on an actual
+  // property change, so assigning the same value again is a no-op: force a
+  // real change by setting a different colour first, then transparent.
+  function reapplyWebBackground() {
+    web.backgroundColor = "#01000000"
+    web.backgroundColor = "transparent"
+  }
+
+  Timer {
+    id: webBackgroundReapply
+    interval: 400
+    repeat: false
+    onTriggered: mainWindow.reapplyWebBackground()
+  }
+
+  // Deterministic trigger: PlayerComponent emits videoPlaybackActive(true) when
+  // it reaches State::playing with the window visible - exactly the point at
+  // which the web view's surface turns opaque. Re-apply then, and once more
+  // shortly after in case the surface is recreated as the first frames land.
+  Connections {
+    target: components.player
+    function onVideoPlaybackActive(active) {
+      if (active) {
+        mainWindow.reapplyWebBackground()
+        webBackgroundSettle.pass = 0
+        webBackgroundSettle.restart()
+      }
+    }
+  }
+
+  // One re-apply at videoPlaybackActive is not enough: onPlaying() navigates
+  // the web client to its OSD view, and that new view brings a fresh - again
+  // opaque - compositor surface a second or two later. Keep re-applying over
+  // the first seconds of playback until that has settled.
+  Timer {
+    id: webBackgroundSettle
+    interval: 500
+    repeat: true
+    running: false
+    property int pass: 0
+    onTriggered: {
+      pass += 1
+      mainWindow.reapplyWebBackground()
+      if (pass >= 12)
+        running = false
+    }
+  }
+
   function setFullScreen(enable) {
-    visibility = enable ? Window.FullScreen : Window.Windowed
+    if (enable)
+      _enterFakeFullScreen()
+    else
+      _leaveFakeFullScreen()
   }
 
   function minimizeWindow() {
-    if (visibility !== Window.FullScreen)
+    if (visibility !== Window.FullScreen && !fakeFullScreen)
       visibility = Window.Minimized
   }
 
@@ -203,23 +289,41 @@ Window
     when: !components.settings.allowBrowserZoom()
   }
 
+
+  // FIX: force the WebEngineView's compositor surface to be recreated when the
+  // player opens.
+  //
+  // The page is CSS-transparent (backgroundColor #00000000, every DOM layer
+  // rgba(0,0,0,0)), but on this setup QtWebEngine's compositor layer is still
+  // composited opaquely until its surface is recreated. That opaque layer sits
+  // at z:100 over the mpv video item, so video renders correctly but is never
+  // visible. Any window-state change (e.g. toggling fullscreen) recreates the
+  // surface and the video appears - which is the long-standing "toggle
+  // fullscreen to see the picture" workaround. Hiding/showing the view forces
+  // the same recreation without touching window state.
   MpvVideoItem
   {
     id: video
     objectName: "video"
     enabled: true
 
-    width: mainWindow.contentItem.width
-    height: mainWindow.contentItem.height
-    anchors.left: mainWindow.contentItem.left
-    anchors.right: mainWindow.contentItem.right
-    anchors.top: mainWindow.contentItem.top
+    // FIX: fill the content item exactly.
+    //
+    // Previously this set anchors.left + anchors.right AND explicit width/height
+    // bindings, with no anchors.bottom. left+right anchors already determine
+    // width, so the explicit width binding conflicts with them, and height was
+    // left to a binding with no matching bottom anchor. The result was a video
+    // surface whose geometry did not match the window's content area: the
+    // picture rendered offset (pushed down/right, cropped, black bands) in any
+    // state where the client area is smaller than the screen - i.e. windowed
+    // and maximised. In true fullscreen the client area happens to equal the
+    // screen, the offset collapses to zero, and the picture looks correct -
+    // which is why toggling fullscreen "fixed" playback.
+    anchors.fill: parent
 
     Component.onCompleted: {
       console.log("MpvVideoItem size:", width, "x", height, "visible:", visible)
     }
-    onWidthChanged: console.log("MpvVideoItem width changed:", width)
-    onHeightChanged: console.log("MpvVideoItem height changed:", height)
   }
 
   WebEngineView
@@ -291,6 +395,7 @@ Window
       else if (loadingInfo.status == WebEngineView.LoadSucceededStatus)
       {
         console.log("WebEngineLoadRequest success: " + loadingInfo.url);
+        webBackgroundReapply.restart();
       }
       else if (loadingInfo.status == WebEngineView.LoadFailedStatus)
       {
