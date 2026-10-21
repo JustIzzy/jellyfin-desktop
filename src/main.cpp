@@ -149,7 +149,6 @@ int main(int argc, char *argv[])
                        {"tv",                       "Start in TV mode"},
                        {"windowed",                 "Start in windowed mode"},
                        {"fullscreen",               "Start in fullscreen"},
-                       {"disable-gpu",              "Disable QtWebEngine gpu accel"},
                        {"ignore-certificate-errors", "Ignore certificate errors"}});
 
     auto scaleOption = QCommandLineOption("scale-factor", "Set to a integer or default auto which controls" \
