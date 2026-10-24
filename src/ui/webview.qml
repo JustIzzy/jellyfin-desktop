@@ -82,52 +82,6 @@ Window
     showDebugLayer = !showDebugLayer
   }
 
-  // : re-apply the web view's base background
-  // colour after the page has loaded.
-  //
-  // The view is declared with backgroundColor: "transparent", yet the surface
-  // it composites is opaque (alpha=255 everywhere, measured via grabToImage).
-  // Qt only propagates this colour to Chromium's base background on an actual
-  // property change, so assigning the same value again is a no-op: force a
-  // real change by setting a different colour first, then transparent.
-  function reapplyWebBackground() {
-    web.backgroundColor = "#01000000"
-    web.backgroundColor = "transparent"
-  }
-
-  // Deterministic trigger: PlayerComponent emits videoPlaybackActive(true) when
-  // it reaches State::playing with the window visible - exactly the point at
-  // which the web view's surface turns opaque. Re-apply then, and once more
-  // shortly after in case the surface is recreated as the first frames land.
-  Connections {
-    target: components.player
-    function onVideoPlaybackActive(active) {
-      if (active) {
-        mainWindow.reapplyWebBackground()
-        webBackgroundSettle.pass = 0
-        webBackgroundSettle.restart()
-      }
-    }
-  }
-
-  // One re-apply at videoPlaybackActive is not enough: onPlaying() navigates
-  // the web client to its OSD view, and that new view brings a fresh - again
-  // opaque - compositor surface a second or two later. Keep re-applying over
-  // the first seconds of playback until that has settled.
-  Timer {
-    id: webBackgroundSettle
-    interval: 500
-    repeat: true
-    running: false
-    property int pass: 0
-    onTriggered: {
-      pass += 1
-      mainWindow.reapplyWebBackground()
-      if (pass >= 12)
-        running = false
-    }
-  }
-
   function setFullScreen(enable) {
     if (enable)
       _enterFakeFullScreen()
@@ -326,7 +280,12 @@ Window
     width: mainWindow.width
     height: mainWindow.height
     z: 100
-    backgroundColor: "transparent"
+    // Qt 6.9.3: a fully-transparent base background (alpha 0) is not composited
+    // transparently - the surface stays opaque over the mpv item. A real colour
+    // with alpha 1/255 is visually identical and does composite. Set here at
+    // construction: assigning backgroundColor at runtime trips a CHECK inside
+    // Qt6WebEngineCore and kills the process (0x80000003).
+    backgroundColor: "#01000000"
 
     // this is needed to prevent intermittent(?) black screens when unminizing
     // or resumsing from suspend (linux/{x11/wayland}, possibly others).
