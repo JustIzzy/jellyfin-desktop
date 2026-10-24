@@ -1,5 +1,6 @@
 #include <QGuiApplication>
 #include <QApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QIcon>
 #include <QtQml>
@@ -379,6 +380,20 @@ int main(int argc, char *argv[])
     }
 
     ProfileManager::Get().setActiveProfile(*activeProfile);
+
+    // Point mpv's config resolution at the active profile directory, which is
+    // where mpv.conf, shaders/ and scripts/ already live. mpv reads MPV_HOME
+    // during option pre-parse inside mpv_initialize(), so this has to be set
+    // before the first mpv context is created - i.e. before the QML engine
+    // instantiates MpvVideoItem.
+    //
+    // Without this (and the matching config=yes in MpvQt), mpv.conf is never
+    // read at all: libmpv defaults to config=no. Measured on 2026-10-24 - every
+    // option in the profile's 10 KB mpv.conf was still at its built-in default
+    // at runtime (glsl-shaders empty, tone-mapping auto, deband no, scale
+    // lanczos, icc-profile-auto no).
+    qputenv("MPV_HOME",
+            QDir::toNativeSeparators(ProfileManager::activeProfile().dataDir()).toUtf8());
 
     // Now everything else - all paths are profile-specific from here on
     QString logLevel = parser.value("log-level");

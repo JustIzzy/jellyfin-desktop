@@ -3,6 +3,7 @@
 *.pro.user*
 dependencies/*
 /build/*
+/build-*/
 deps/*
 dev/windows/deps/
 dev/macos/deps/
