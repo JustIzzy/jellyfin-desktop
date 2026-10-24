@@ -95,7 +95,10 @@ void PlayerComponent::initializeMpv()
   // Properties that needed to be set before init were set in MpvVideoItem constructor
 
   mpv_request_log_messages(m_mpv->mpv(), "terminal-default");
-  m_mpv->setProperty("msg-level", "all=v");
+  // owner 2026-10-23: upstream shipped all=v (verbose). mpv logs per-frame at that level,
+  // which costs on a hot path for diagnostics we no longer need. Raise it back to all=v
+  // when debugging playback.
+  m_mpv->setProperty("msg-level", "all=info");
 
   mpv_set_wakeup_callback(m_mpv->mpv(), wakeup_cb, this);
 
