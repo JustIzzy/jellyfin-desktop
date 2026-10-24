@@ -54,13 +54,30 @@ Window
   // leaves fullscreen. Borderless-maximised keeps DWM compositing and renders
   // correctly, while looking identical to the user.
   property bool fakeFullScreen: false
+  property rect _preFullScreenGeometry: Qt.rect(0, 0, 0, 0)
 
   function _enterFakeFullScreen() {
     if (fakeFullScreen)
       return
     fakeFullScreen = true
+    _preFullScreenGeometry = Qt.rect(mainWindow.x, mainWindow.y, mainWindow.width, mainWindow.height)
     mainWindow.flags |= Qt.FramelessWindowHint
-    visibility = Window.Maximized
+
+    // Cover the screen with explicit geometry rather than Window.Maximized.
+    //
+    // A maximized window on Windows keeps the invisible resize border - about
+    // 7px a side - even when frameless. Qt still reports the full screen size,
+    // so the page lays out wider than the client area actually shown and the
+    // right and bottom edges are clipped. Measured on a 4096x2160 display at
+    // 200% scaling: viewport 2048x1080 inside a 2034x1073 window at x=7.
+    // Setting the geometry directly gives a client area that is exactly the
+    // screen, and also covers the taskbar as true fullscreen would.
+    var s = mainWindow.screen
+    visibility = Window.Windowed
+    mainWindow.x = s.virtualX
+    mainWindow.y = s.virtualY
+    mainWindow.width = s.width
+    mainWindow.height = s.height
   }
 
   function _leaveFakeFullScreen() {
@@ -69,6 +86,12 @@ Window
     fakeFullScreen = false
     mainWindow.flags &= ~Qt.FramelessWindowHint
     visibility = Window.Windowed
+    if (_preFullScreenGeometry.width > 0 && _preFullScreenGeometry.height > 0) {
+      mainWindow.x = _preFullScreenGeometry.x
+      mainWindow.y = _preFullScreenGeometry.y
+      mainWindow.width = _preFullScreenGeometry.width
+      mainWindow.height = _preFullScreenGeometry.height
+    }
   }
 
   function toggleFullscreen() {
