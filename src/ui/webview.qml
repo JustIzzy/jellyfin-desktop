@@ -72,8 +72,21 @@ Window
     // 200% scaling: viewport 2048x1080 inside a 2034x1073 window at x=7.
     // Setting the geometry directly gives a client area that is exactly the
     // screen, and also covers the taskbar as true fullscreen would.
+    // Applying the geometry has to wait a turn of the event loop: changing
+    // visibility makes Qt restore the stored windowed geometry asynchronously,
+    // which would otherwise land after these assignments and undo them
+    // (measured: window came back as 1280x720 at 384,151).
+    if (visibility !== Window.Windowed)
+      visibility = Window.Windowed
+    Qt.callLater(mainWindow._applyFullScreenGeometry)
+  }
+
+  function _applyFullScreenGeometry() {
+    if (!fakeFullScreen)
+      return
     var s = mainWindow.screen
-    visibility = Window.Windowed
+    if (!s)
+      return
     mainWindow.x = s.virtualX
     mainWindow.y = s.virtualY
     mainWindow.width = s.width
