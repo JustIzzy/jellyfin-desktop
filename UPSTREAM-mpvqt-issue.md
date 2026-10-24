@@ -91,3 +91,82 @@ but the acknowledgement itself is the required part.
 Any mpvqt consumer on a build where the scene graph does not happen to repaint the item for other
 reasons will see black video with working audio. Downstream, this is the long-standing
 jellyfin-desktop "video only appears after toggling fullscreen" bug.
+
+---
+---
+
+# SECOND ISSUE (added 2026-10-24) — higher impact than the one above
+
+## Title
+`MpvController::init()` never enables mpv config loading, so no consumer's `mpv.conf` is ever read — and the `mpvqt.conf` include is set too late to work
+
+## Summary
+`MpvController::init()` (`src/mpvcontroller.cpp`) calls `mpv_initialize()` without ever
+setting `config=yes`. **libmpv defaults to `config=no`**, so mpv reads no configuration
+file at all. Every option a host application ships in its config directory stays at
+mpv's built-in default, silently.
+
+The `mpvqt.conf` include is affected by a second, related bug. `config`, `config-dir` and
+`include` are only honoured during mpv's option **pre-parse**, inside `mpv_initialize()`.
+`init()` assigns `include` **after** `mpv_initialize()` has already returned:
+
+```cpp
+mpv_initialize(d_ptr->m_mpv);                      // pre-parse happens here
+...
+setProperty(QStringLiteral("include"), configPath); // too late - accepted, no effect
+```
+
+So mpvqt's own config file mechanism does not work either. On a default install the path
+does not exist, which also means telling mpv to include it would emit a startup error.
+
+## Evidence (measured)
+Replicating this exact init sequence against a host's 10 KB `mpv.conf` and reading the
+properties back:
+
+| option | as mpvqt initialises | with `config=yes` + `config-dir` |
+|---|---|---|
+| `config` | **no** | yes |
+| `glsl-shaders` | **(empty)** | the configured shaders |
+| `tone-mapping` | auto | spline |
+| `hdr-compute-peak` | auto | yes |
+| `deband` | **no** | yes |
+| `dither` | **fruit** | error-diffusion |
+| `scale` | **lanczos** | ewa_lanczossharp |
+| `icc-profile-auto` | **no** | yes |
+| `blend-subtitles` | no | yes |
+
+Every value differs. Confirmed live afterwards: with the fix applied, mpv immediately
+began reporting on an option it had never seen before
+(`Interpolation now requires enabling display-sync mode` — emitted only because
+`interpolation=yes` was finally being read).
+
+## Impact
+Every mpvqt consumer silently loses its entire mpv configuration. Downstream in
+jellyfin-desktop this meant user-authored shader chains, tone mapping, debanding,
+dithering and ICC settings had never taken effect — tuning sessions were comparing
+mpv defaults against mpv defaults.
+
+## Suggested fix
+Set `config=yes` and move the `include` before `mpv_initialize()`, guarding the include
+on the file existing:
+
+```cpp
+d_ptr->m_mpv = mpv_create();
+mpv_set_option_string(d_ptr->m_mpv, "config", "yes");
+if (QFileInfo::exists(configPath))
+    mpv_set_option_string(d_ptr->m_mpv, "include", configPath.toUtf8().constData());
+if (mpv_initialize(d_ptr->m_mpv) < 0) { /* ... */ }
+setProperty("vo", "libmpv");   // must stay after, must win over any vo= in config
+```
+
+Hosts then point `MPV_HOME` (or `config-dir`) at their own profile directory.
+
+Implemented downstream as `JustIzzy/mpvqt` commit `1dd0a97` on branch
+`fix/rearm-render-update`, with the host-side half in `JustIzzy/jellyfin-desktop`
+commit `4e4f64e`.
+
+## Note on scope
+`vo=libmpv` is correctly set after `mpv_initialize()` and must stay there, so a config
+file cannot select a different VO. That is intended, but worth documenting: it means
+`vo=gpu-next` is unreachable through mpvqt, and gpu-next-only options are rejected at
+runtime with `Tone mapping curve unsupported by vo_gpu, falling back`.

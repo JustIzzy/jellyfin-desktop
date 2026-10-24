@@ -65,3 +65,53 @@ No desktop screen-capture tool can see this window in fullscreen — it presents
 independent flip / MPO, so GDI `CopyFromScreen` returns pure black even for content that
 is plainly visible. Four separate capture tools produced false evidence during this
 investigation. Use `grabToImage` instead.
+
+---
+
+## UPDATE 2026-10-24 — Qt 6.9.3 coverage, and a trap in the workaround
+
+### The bug is still present in Qt 6.9.3
+Originally investigated on Qt 6.8.1. Re-confirmed on **Qt 6.9.3**: a clean upstream build
+still shows no picture until fullscreen is toggled. The report stands for 6.9.3.
+
+### The workaround has a hard constraint that is worth stating in the report
+The fix is to force a real property change, since assigning `backgroundColor` its current
+value is a no-op and never reaches Chromium's compositor. **The intermediate colour must
+be fully opaque or fully transparent.**
+
+The original workaround used `#01000000` (alpha 1/255). On Qt 6.8.1 that is tolerated. On
+**Qt 6.9.3 it trips a CHECK inside `Qt6WebEngineCore` and kills the process** with
+exception `0x80000003` (STATUS_BREAKPOINT), fault offset `0x315c40e`.
+
+Established by a four-build bisect, every crash identical:
+
+| Build | Value assigned | Result |
+|---|---|---|
+| upstream master | `"transparent"` only | runs; bug present |
+| workaround v1 | runtime `#01000000` → transparent | crash at startup |
+| workaround v2 (one call site removed) | same value, other site | crash at playback |
+| workaround v3 (declared at construction) | `#01000000`, zero runtime writes | crash at startup |
+
+The constant is the **value**, not the timing: Chromium requires its base background to be
+fully opaque or fully transparent, and alpha 1/255 is neither.
+
+Working form — opaque black is legal, still differs from `"transparent"` so propagation is
+still forced, and is never seen because both assignments happen in one call:
+
+```qml
+function reapplyWebBackground() {
+  web.backgroundColor = "#ff000000"
+  web.backgroundColor = "transparent"
+}
+```
+
+This matters for the report: anyone reproducing the bug and reaching for the obvious
+"nearly transparent" intermediate value will crash on 6.9.3 and may wrongly conclude the
+workaround itself is unsafe.
+
+### Suggested framing
+Two separate asks for Qt:
+1. `WebEngineView.backgroundColor` declared `"transparent"` should reach Chromium's base
+   background without requiring a property *change* (the actual bug).
+2. Assigning a partially transparent `backgroundColor` should be rejected or clamped at
+   the Qt layer, not allowed through to a CHECK failure that terminates the process.
