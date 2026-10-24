@@ -277,8 +277,12 @@ Window
   {
     id: web
     objectName: "web"
-    width: mainWindow.width
-    height: mainWindow.height
+    // Fill the content item, not the window. Binding to mainWindow.width/height
+    // sizes the view to the whole window rather than its client area, so the page
+    // lays out wider than the area it is shown in and the right/bottom edges are
+    // clipped (measured: viewport 2048x1080 inside a 2034x1073 window). Same bug
+    // and same fix as MpvVideoItem above.
+    anchors.fill: parent
     z: 100
     // Qt 6.9.3: a fully-transparent base background (alpha 0) is not composited
     // transparently - the surface stays opaque over the mpv item. A real colour
