@@ -131,9 +131,24 @@ Window
   // 0x80000003. Measured: that crash reproduces from the load handler, from
   // videoPlaybackActive, and from the declaration itself - i.e. whenever the
   // partially-transparent value is assigned at all. Opaque black is legal.
+  // Guard: never hand Chromium a partially transparent base background, whatever
+  // a future edit passes in. Alpha must be 0 or 255; anything between is clamped
+  // to the nearer legal value and reported, so the 0x80000003 crash cannot
+  // return silently.
+  function _setWebBackground(c) {
+    var col = (typeof c === "string") ? Qt.color(c) : c
+    if (col.a > 0 && col.a < 1) {
+      var opaque = col.a >= 0.5
+      console.warn("webview: illegal partial-alpha base background (a=" + col.a +
+                   ") - clamped to " + (opaque ? "opaque" : "transparent"))
+      col = opaque ? Qt.rgba(col.r, col.g, col.b, 1) : Qt.rgba(0, 0, 0, 0)
+    }
+    web.backgroundColor = col
+  }
+
   function reapplyWebBackground() {
-    web.backgroundColor = "#ff000000"
-    web.backgroundColor = "transparent"
+    _setWebBackground("#ff000000")
+    _setWebBackground("transparent")
   }
 
   // Deterministic trigger: PlayerComponent emits videoPlaybackActive(true) at
