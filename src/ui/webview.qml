@@ -95,13 +95,6 @@ Window
     web.backgroundColor = "transparent"
   }
 
-  Timer {
-    id: webBackgroundReapply
-    interval: 400
-    repeat: false
-    onTriggered: mainWindow.reapplyWebBackground()
-  }
-
   // Deterministic trigger: PlayerComponent emits videoPlaybackActive(true) when
   // it reaches State::playing with the window visible - exactly the point at
   // which the web view's surface turns opaque. Re-apply then, and once more
@@ -395,7 +388,6 @@ Window
       else if (loadingInfo.status == WebEngineView.LoadSucceededStatus)
       {
         console.log("WebEngineLoadRequest success: " + loadingInfo.url);
-        webBackgroundReapply.restart();
       }
       else if (loadingInfo.status == WebEngineView.LoadFailedStatus)
       {
