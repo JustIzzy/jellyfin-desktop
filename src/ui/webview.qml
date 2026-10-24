@@ -82,6 +82,54 @@ Window
     showDebugLayer = !showDebugLayer
   }
 
+  // Force Qt to propagate the web view's base background to Chromium.
+  //
+  // Assigning backgroundColor a value equal to its current value is a no-op, so
+  // the declared "transparent" never reaches Chromium's compositor and the
+  // surface stays opaque over the mpv item. Forcing a real change fixes it.
+  //
+  // The intermediate colour MUST be fully opaque or fully transparent. Chromium
+  // requires its base background to be one or the other, and a partially
+  // transparent value (the original fix used #01000000, alpha 1/255) trips a
+  // CHECK inside Qt6WebEngineCore on 6.9.3 and kills the process with
+  // 0x80000003. Measured: that crash reproduces from the load handler, from
+  // videoPlaybackActive, and from the declaration itself - i.e. whenever the
+  // partially-transparent value is assigned at all. Opaque black is legal.
+  function reapplyWebBackground() {
+    web.backgroundColor = "#ff000000"
+    web.backgroundColor = "transparent"
+  }
+
+  // Deterministic trigger: PlayerComponent emits videoPlaybackActive(true) at
+  // State::playing with the window visible - exactly when the surface turns
+  // opaque. One pass is not enough: onPlaying() navigates the web client to its
+  // OSD view, which arrives with a fresh opaque surface a second or two later,
+  // so keep re-applying over the first seconds of playback.
+  Connections {
+    target: components.player
+    function onVideoPlaybackActive(active) {
+      if (active) {
+        mainWindow.reapplyWebBackground()
+        webBackgroundSettle.pass = 0
+        webBackgroundSettle.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: webBackgroundSettle
+    interval: 500
+    repeat: true
+    running: false
+    property int pass: 0
+    onTriggered: {
+      pass += 1
+      mainWindow.reapplyWebBackground()
+      if (pass >= 12)
+        running = false
+    }
+  }
+
   function setFullScreen(enable) {
     if (enable)
       _enterFakeFullScreen()
@@ -284,12 +332,7 @@ Window
     // and same fix as MpvVideoItem above.
     anchors.fill: parent
     z: 100
-    // Qt 6.9.3: a fully-transparent base background (alpha 0) is not composited
-    // transparently - the surface stays opaque over the mpv item. A real colour
-    // with alpha 1/255 is visually identical and does composite. Set here at
-    // construction: assigning backgroundColor at runtime trips a CHECK inside
-    // Qt6WebEngineCore and kills the process (0x80000003).
-    backgroundColor: "#01000000"
+    backgroundColor: "transparent"
 
     // this is needed to prevent intermittent(?) black screens when unminizing
     // or resumsing from suspend (linux/{x11/wayland}, possibly others).
