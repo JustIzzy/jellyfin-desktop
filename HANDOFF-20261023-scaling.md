@@ -80,7 +80,55 @@ JSON.stringify({inner:[innerWidth,innerHeight], outer:[outerWidth,outerHeight],
 Pass condition: `inner` equals `outer` equals `[2048,1080]`, origin `(0,0)`,
 and the taskbar is covered. Helper scripts are in the scratchpad (see §6).
 
-### If `78e5c72` also fails
+### WHAT ACTUALLY MATTERS — found last, read this first
+
+**The QML `_enterFakeFullScreen()` is not the code that runs at startup.**
+Window state is owned by C++ in `src/ui/WindowManager.cpp`:
+
+```cpp
+void WindowManager::setFullScreen(bool enable) {
+  if (enable) { m_window->showFullScreen(); updateForcedScreen(); }
+  else { ... m_window->showMaximized(); ... }   // line ~234
+}
+```
+
+With `fullscreen=true` in the config, C++ calls `showFullScreen()` at startup.
+The QML function is a separate path (the web client's own fullscreen toggle),
+so **every edit made to it in `5053d5f` / `78e5c72` had no effect on the startup
+window at all.** Verified: the shipped binary does contain
+`_applyFullScreenGeometry` (string present twice), it simply is not on the
+startup path. Fix belongs in `WindowManager.cpp`, not `webview.qml`.
+
+Note also that `419dd19` added the QML fake-fullscreen specifically to avoid
+true fullscreen (Optimus direct-scanout theory), while C++ still calls
+`showFullScreen()`. Those two intentions are in conflict and that should be
+resolved deliberately.
+
+### TESTING TRAP that invalidated earlier comparisons
+
+**Portable builds use their own profile**, next to the exe:
+`<portable>\data\profiles\<new id>\` — a fresh default with `fullscreen=False`,
+no `mpv.conf`, no server URL. The installed app uses
+`%LOCALAPPDATA%\Jellyfin Desktop\profiles\5d0b1223...`.
+
+Consequences for anything read above:
+- Builds compared across different extractions had **different profile state**,
+  not just different code. The conclusion that `5053d5f` "regressed" the window
+  to 1280x720 is unsound - that was simply `fullscreen=False` in a fresh
+  portable profile, so no fullscreen path ran at all.
+- Any mpv tuning written to the installed profile is **not active** in a
+  portable build.
+
+To test properly, copy `jellyfin-desktop.conf`, `mpv.conf` and `storage.json`
+from the installed profile into the portable one first. With that done, the
+measurement is:
+
+```
+inner 2048x1080   outer 2034x1073   origin (7,0)    <- i.e. unchanged from
+                                                       the original bug
+```
+
+### If a `WindowManager.cpp` fix is also insufficient
 Fall back to `visibility = Window.Maximized` (clips 14px but works), and
 investigate handling `WM_NCCALCSIZE`, which is the standard Windows fix for
 borderless-maximised client-area insets. Also unexplored: `storage.json` has
